@@ -1,14 +1,3 @@
-# =====================================================
-# 🏋️ PRO Telegram бот — Планнер тренировок (POSTGRESQL)
-# • FSM (aiogram 3)
-# • Inline UI
-# • Профиль пользователя
-# • Статистика тренировок
-# • Гибкий интервал напоминаний
-# • PostgreSQL (Railway-ready)
-# • Поддержка проекта → переход к @GRAF_DEMIDOV
-# =====================================================
-
 import asyncio
 import logging
 import os
@@ -22,14 +11,15 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# -------------------------------
-# ENV
-API_TOKEN = os.getenv("API_TOKEN")
-DATABASE_URL = os.getenv("postgresql://postgres:YudFMXUnZvyvseDzxxBboMSrWKKHnNkS@postgres.railway.internal:5432/railway")
 logging.basicConfig(level=logging.INFO)
 
-# -------------------------------
-# FSM
+API_TOKEN = os.getenv("API_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
+# -------------------- FSM --------------------
 class AddWorkout(StatesGroup):
     day = State()
     time = State()
@@ -38,13 +28,26 @@ class AddWorkout(StatesGroup):
 class SetInterval(StatesGroup):
     interval = State()
 
-# -------------------------------
-# Bot
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+# -------------------- UI --------------------
+main_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="➕ Добавить тренировку", callback_data="add")],
+    [InlineKeyboardButton(text="📅 Мои тренировки", callback_data="list")],
+    [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+    [InlineKeyboardButton(text="⭐ Поддержать проект", url="https://t.me/GRAF_DEMIDOV")]
+])
 
-# -------------------------------
-# DB pool
+days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+days_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=d, callback_data=f"day_{d}")] for d in days])
+
+times_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{h}:00", callback_data=f"time_{h}:00")] for h in range(6,24)])
+
+interval_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="⏱ 1 час", callback_data="int_1")],
+    [InlineKeyboardButton(text="⏱ 3 часа", callback_data="int_3")],
+    [InlineKeyboardButton(text="⏱ 6 часов", callback_data="int_6")]
+])
+
+# -------------------- DB --------------------
 pool: asyncpg.Pool
 
 async def init_db():
@@ -73,49 +76,21 @@ async def init_db():
         );
         """)
 
-# -------------------------------
-# UI
-main_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="➕ Добавить тренировку", callback_data="add")],
-    [InlineKeyboardButton(text="📅 Мои тренировки", callback_data="list")],
-    [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-    [InlineKeyboardButton(text="⭐ Поддержать проект", url="https://t.me/GRAF_DEMIDOV")]
-])
-
-days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-days_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=d, callback_data=f"day_{d}")] for d in days])
-
-times_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{h}:00", callback_data=f"time_{h}:00")] for h in range(6, 24)])
-
-interval_kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="⏱ 1 час", callback_data="int_1")],
-    [InlineKeyboardButton(text="⏱ 3 часа", callback_data="int_3")],
-    [InlineKeyboardButton(text="⏱ 6 часов", callback_data="int_6")]
-])
-
-# -------------------------------
-# Helpers
 async def ensure_user(user_id: int):
     async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING",
-            user_id
-        )
+        await conn.execute("INSERT INTO users (user_id) VALUES ($1) ON CONFLICT DO NOTHING", user_id)
 
-# -------------------------------
-# Start
+# -------------------- Start --------------------
 @dp.message(Command("start"))
 async def start(message: Message):
     await ensure_user(message.from_user.id)
     await message.answer(
-        "🔥 <b>Планнер тренировок</b>\n\n"
-        "Тренируйся регулярно и отслеживай прогресс 💪",
+        "🔥 <b>Планнер тренировок</b>\n\nТренируйся регулярно и отслеживай прогресс 💪",
         reply_markup=main_kb,
         parse_mode="HTML"
     )
 
-# -------------------------------
-# Add workout FSM
+# -------------------- Add Workout --------------------
 @dp.callback_query(F.data == "add")
 async def add_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AddWorkout.day)
@@ -147,8 +122,7 @@ async def add_title(message: Message, state: FSMContext):
     await message.answer("✅ Тренировка добавлена", reply_markup=main_kb)
     await state.clear()
 
-# -------------------------------
-# Profile & stats
+# -------------------- Profile --------------------
 @dp.callback_query(F.data == "profile")
 async def profile(cb: CallbackQuery):
     async with pool.acquire() as conn:
@@ -158,17 +132,13 @@ async def profile(cb: CallbackQuery):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⏱ Интервал напоминаний", callback_data="set_interval")]])
     await cb.message.answer(
-        f"👤 <b>Профиль</b>\n\n"
-        f"🏋️ Тренировок: {count}\n"
-        f"✅ Выполнено: {done}\n"
-        f"⏱ Интервал: {u['reminders_interval']} ч",
+        f"👤 <b>Профиль</b>\n\n🏋️ Тренировок: {count}\n✅ Выполнено: {done}\n⏱ Интервал: {u['reminders_interval']} ч",
         reply_markup=kb,
         parse_mode="HTML"
     )
     await cb.answer()
 
-# -------------------------------
-# Interval
+# -------------------- Set Interval --------------------
 @dp.callback_query(F.data == "set_interval")
 async def set_interval(cb: CallbackQuery, state: FSMContext):
     await state.set_state(SetInterval.interval)
@@ -184,8 +154,29 @@ async def save_interval(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await cb.answer()
 
-# -------------------------------
-# Reminder loop
+# -------------------- List / Delete --------------------
+@dp.callback_query(F.data == "list")
+async def list_workouts(cb: CallbackQuery):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, day, time, title FROM workouts WHERE user_id=$1", cb.from_user.id)
+    if not rows:
+        await cb.message.answer("😴 Тренировок пока нет", reply_markup=main_kb)
+        await cb.answer()
+        return
+    for wid, day, time, title in rows:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del_{wid}")]])
+        await cb.message.answer(f"📅 {day} ⏰ {time}\n🏋️ {title}", reply_markup=kb)
+    await cb.answer()
+
+@dp.callback_query(F.data.startswith("del_"))
+async def delete(cb: CallbackQuery):
+    wid = int(cb.data.split("_")[1])
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM workouts WHERE id=$1", wid)
+    await cb.message.edit_text("❌ Удалено")
+    await cb.answer()
+
+# -------------------- Reminder Loop --------------------
 async def reminder_loop():
     while True:
         async with pool.acquire() as conn:
@@ -193,31 +184,19 @@ async def reminder_loop():
             now = datetime.now()
             day = days[now.weekday()]
             time_now = now.strftime("%H:00")
-
             for u in users:
                 if now.hour % u['reminders_interval'] != 0:
                     continue
-                workouts = await conn.fetch(
-                    "SELECT id, title FROM workouts WHERE user_id=$1 AND day=$2 AND time=$3",
-                    u['user_id'], day, time_now
-                )
+                workouts = await conn.fetch("SELECT id, title FROM workouts WHERE user_id=$1 AND day=$2 AND time=$3", u['user_id'], day, time_now)
                 for w in workouts:
                     try:
-                        await bot.send_message(
-                            u['user_id'],
-                            f"⏰ <b>Пора тренироваться!</b>\n🏋️ {w['title']}",
-                            parse_mode="HTML"
-                        )
-                        await conn.execute(
-                            "INSERT INTO stats (user_id, workout_id) VALUES ($1,$2)",
-                            u['user_id'], w['id']
-                        )
+                        await bot.send_message(u['user_id'], f"⏰ <b>Пора тренироваться!</b>\n🏋️ {w['title']}", parse_mode="HTML")
+                        await conn.execute("INSERT INTO stats (user_id, workout_id) VALUES ($1,$2)", u['user_id'], w['id'])
                     except:
                         pass
-        await asyncio.sleep(3600)
+        await asyncio.sleep(3600)  # проверка каждый час, уведомление только по интервалу
 
-# -------------------------------
-# Run
+# -------------------- Main --------------------
 async def main():
     await init_db()
     asyncio.create_task(reminder_loop())
