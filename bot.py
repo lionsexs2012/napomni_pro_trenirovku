@@ -18,7 +18,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.filters import Command
 
 # 🔑 Токен берём из переменной окружения (для Railway)
-API_TOKEN = os.environ.get("python bot.py")
+API_TOKEN = os.environ.get("API_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
 
